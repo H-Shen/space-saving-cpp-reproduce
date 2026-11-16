@@ -1,5 +1,7 @@
-// Sanity checks for the baselines used in the comparison experiments.
+// Sanity checks for the baselines used in the comparison experiments, and an
+// exhaustive check of the exact top-k (hash map + two heaps).
 #include <space_saving/baselines/count_sketch.hpp>
+#include <space_saving/baselines/exact_top_k.hpp>
 #include <space_saving/baselines/frequent.hpp>
 #include <space_saving/baselines/group_test.hpp>
 #include <space_saving/baselines/probabilistic_inplace.hpp>
@@ -97,6 +99,42 @@ int probabilistic_inplace_top() {
     return failures;
 }
 
+/// After every arrival the two heaps hold an exact top-$k$, largest first, and exact
+/// counts. Small alphabets, so there are many ties at the cutoff.
+int exact_top_k_after_every_insert() {
+    std::mt19937_64 rng{11};  // NOLINT(bugprone-random-generator-seed): reproducible tests
+    int failures = 0;
+    for (int trial = 0; trial < 300; ++trial) {
+        const auto alphabet = std::uniform_int_distribution<Item>{1, 40}(rng);
+        const auto k = std::uniform_int_distribution<std::size_t>{1, 12}(rng);
+        const auto n = std::uniform_int_distribution{1, 400}(rng);
+        const auto skew = std::uniform_real_distribution{0.0, 2.0}(rng);
+        const auto weights = std::views::iota(Item{1}, alphabet + 1) |
+                             std::views::transform([skew](Item i) { return std::pow(static_cast<double>(i), -skew); }) |
+                             std::ranges::to<std::vector>();
+        std::discrete_distribution<Item> pick(weights.begin(), weights.end());
+
+        ss::baseline::ExactTopK<Item> exact{k};
+        std::vector<ss::Count> f(alphabet);
+        for (int i = 0; i < n; ++i) {
+            const Item x = pick(rng);
+            exact.insert(x);
+            ++f[x];
+
+            const auto top = exact.top_k();
+            const auto seen = static_cast<std::size_t>(std::ranges::count_if(f, [](ss::Count c) { return c > 0; }));
+            failures += check(top.size() == std::min(k, seen), "min(k, distinct) elements");
+            failures += check(exact.counters() == seen && exact.count(x) == f[x], "exact counts");
+            const auto freq = [&](Item y) { return f[y]; };
+            failures += check(std::ranges::is_sorted(top, std::greater{}, freq), "largest first");
+            const ss::Count least = top.empty() ? 0 : f[top.back()];
+            for (const auto [y, fy] : std::views::enumerate(f))
+                if (!std::ranges::contains(top, static_cast<Item>(y))) failures += check(fy <= least, "no omitted element is larger");
+        }
+    }
+    return failures;
+}
+
 }  // namespace
 
 int main() {  // NOLINT(bugprone-exception-escape): a test may terminate on an unexpected exception
@@ -105,6 +143,7 @@ int main() {  // NOLINT(bugprone-exception-escape): a test may terminate on an u
         std::pair{"CountSketch: heavy hitters", &count_sketch_heavy_hitters},
         std::pair{"GroupTest: hot items", &group_test_hot_items},
         std::pair{"Probabilistic-InPlace: top candidates", &probabilistic_inplace_top},
+        std::pair{"ExactTopK: exact top-k after every insert", &exact_top_k_after_every_insert},
     };
     int failures = 0;
     for (const auto& [name, test] : tests) {

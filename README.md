@@ -2,7 +2,7 @@
 
 This project reproduces the Space-Saving algorithm and the experiments presented in **[Efficient Computation of Frequent and Top-k Elements in Data Streams](https://doi.org/10.1007/978-3-540-30570-5_27)** by Ahmed Metwally, Divyakant Agrawal, and Amr El Abbadi (ICDT 2005).
 
-The implementation follows the pseudocode in the paper: Space-Saving (Fig. 1), the Stream-Summary data structure (Sec. 3.1), QueryFrequent (Fig. 3) and QueryTop-k (Fig. 4). It also implements the four algorithms the paper compares against: **Frequent** and **GroupTest** for frequent elements (Fig. 5), and **CountSketch** and **Probabilistic-InPlace** for top-k (Fig. 6). The library is header-only and depends only on the C++ standard library.
+The implementation follows the pseudocode in the paper: Space-Saving (Fig. 1), the Stream-Summary data structure (Sec. 3.1), QueryFrequent (Fig. 3) and QueryTop-k (Fig. 4). It also implements the four algorithms the paper compares against: **Frequent** and **GroupTest** for frequent elements (Fig. 5), and **CountSketch** and **Probabilistic-InPlace** for top-k (Fig. 6). For reference it adds an **exact** top-k, which is not in the paper: one counter per distinct element, plus a min-heap of the current top-k and a max-heap of the rest. The library is header-only and depends only on the C++ standard library.
 
 ## Building and Running
 
@@ -46,7 +46,7 @@ Each reported element carries the interval `[count - ε .. count]` that contains
 `xmake test` runs six tests:
 
 1. **`test_space_saving`:** checks the paper's examples (Example 1 / Fig. 2, and the permutation example of Sec. 3.2), then runs 3,000 random skewed streams against exact counts. On every stream it verifies the Stream-Summary invariants, Lemma 1 ($\mathit{min} \le N/m$), the bounds $\mathrm{count}_e - \varepsilon_e \le F_e \le \mathrm{count}_e$, Theorems 1 and 2, and that every `guaranteed` and `order` flag returned by Fig. 3 and Fig. 4 is correct. It also checks that copies of a summary are independent of their source and outlive it, that moves leave an empty summary, that the guarantee of an extended top-k answer does not carry over to its first $k$ elements, and that an answer with fewer than $k$ elements is certified only when it lists every element seen.
-2. **`test_baselines`:** checks the error bound of Frequent on 500 random streams, and that CountSketch, GroupTest and Probabilistic-InPlace recover planted heavy hitters.
+2. **`test_baselines`:** checks the error bound of Frequent on 500 random streams, that CountSketch, GroupTest and Probabilistic-InPlace recover planted heavy hitters, and that the exact top-k matches brute force after every insert.
 3. **`test_exception_safety`:** makes every allocation, and every copy of a key, fail in turn during each insert. A failed insert must change nothing, and the final summary must equal one built without failures.
 4. **`test_experiment`:** checks the scoring used by the experiment, including ties at the top-k cutoff, and that every configuration the command line accepts gives every algorithm a usable budget.
 5. **`paper_example`:** runs the worked example.
@@ -78,6 +78,7 @@ run-clang-tidy -quiet -p build
 | GroupTest | $\lceil \ln\frac{1}{\delta\phi} \rceil$ tests $\times$ $2/\phi$ groups $\times$ 21 counters |
 | CountSketch | $\lceil \ln(N/\delta) \rceil$ rows $\times$ $16k$ columns (the paper's "hidden factor of 16") |
 | Probabilistic-InPlace | the same $m$ as Space-Saving |
+| Exact (two heaps) | one counter per distinct element (not in the paper) |
 
 Parameters can be changed on the command line, for example:
 
@@ -101,44 +102,50 @@ Results obtained on Linux x86-64 with GCC 15.2; [`results/`](results) holds the 
 
 |  α  | algorithm    | counters | time (ms) | precision | recall | guaranteed | memory (KiB) |
 |----:|--------------|---------:|----------:|----------:|-------:|:----------:|-------------:|
-| 0.0 | Space-Saving |    10000 |       393 |     1.000 |  1.000 |    yes     |        783.5 |
-| 0.0 | Frequent     |      100 |       346 |     0.000 |  1.000 |     -      |          3.6 |
+| 0.0 | Space-Saving |    10000 |       392 |     1.000 |  1.000 |    yes     |        783.5 |
+| 0.0 | Frequent     |      100 |       347 |     0.000 |  1.000 |     -      |          3.6 |
 | 0.0 | GroupTest    |    42000 |       536 |     1.000 |  1.000 |     -      |        328.3 |
-| 1.0 | Space-Saving |    10000 |       318 |     1.000 |  1.000 |    yes     |        828.8 |
-| 1.0 | Frequent     |      100 |       339 |     0.162 |  1.000 |     -      |          2.0 |
-| 1.0 | GroupTest    |    42000 |       521 |     0.750 |  1.000 |     -      |        328.3 |
-| 2.0 | Space-Saving |      100 |        80 |     1.000 |  1.000 |    yes     |         10.5 |
+| 1.0 | Space-Saving |    10000 |       326 |     1.000 |  1.000 |    yes     |        828.8 |
+| 1.0 | Frequent     |      100 |       341 |     0.162 |  1.000 |     -      |          2.0 |
+| 1.0 | GroupTest    |    42000 |       518 |     0.750 |  1.000 |     -      |        328.3 |
+| 2.0 | Space-Saving |      100 |        82 |     1.000 |  1.000 |    yes     |         10.5 |
 | 2.0 | Frequent     |      100 |        41 |     0.070 |  1.000 |     -      |          3.9 |
-| 2.0 | GroupTest    |    42000 |       538 |     1.000 |  1.000 |     -      |        328.3 |
-| 3.0 | Space-Saving |       22 |        56 |     1.000 |  1.000 |    yes     |          2.6 |
-| 3.0 | Frequent     |      100 |        39 |     0.048 |  1.000 |     -      |          3.4 |
-| 3.0 | GroupTest    |    42000 |       439 |     1.000 |  1.000 |     -      |        328.3 |
+| 2.0 | GroupTest    |    42000 |       526 |     1.000 |  1.000 |     -      |        328.3 |
+| 3.0 | Space-Saving |       22 |        54 |     1.000 |  1.000 |    yes     |          2.6 |
+| 3.0 | Frequent     |      100 |        38 |     0.048 |  1.000 |     -      |          3.4 |
+| 3.0 | GroupTest    |    42000 |       426 |     1.000 |  1.000 |     -      |        328.3 |
 
 **Top-100** (cf. Fig. 6):
 
 |  α  | algorithm             | counters | time (ms) | precision | recall | exact | guaranteed | order | memory (KiB) |
 |----:|-----------------------|---------:|----------:|----------:|-------:|:-----:|:----------:|:-----:|-------------:|
-| 0.0 | Space-Saving          |   138156 |       617 |     0.000 |  0.000 |  no   |     no     |  no   |      10869.0 |
-| 0.0 | CountSketch           |    33600 |      2225 |     0.010 |  0.010 |  no   |     -      |   -   |        272.0 |
-| 0.0 | Probabilistic-InPlace |   138156 |       281 |     0.001 |  0.750 |   -   |     -      |   -   |       3470.0 |
-| 1.0 | Space-Saving          |   138156 |       376 |     1.000 |  1.000 |  yes  |    yes     |  yes  |      10937.9 |
-| 1.0 | CountSketch           |    33600 |      2152 |     0.990 |  0.990 |  no   |     -      |   -   |        272.0 |
-| 1.0 | Probabilistic-InPlace |   138156 |       280 |     0.001 |  1.000 |   -   |     -      |   -   |       2666.8 |
+| 0.0 | Space-Saving          |   138156 |       607 |     0.000 |  0.000 |  no   |     no     |  no   |      10869.0 |
+| 0.0 | CountSketch           |    33600 |      2224 |     0.010 |  0.010 |  no   |     -      |   -   |        272.0 |
+| 0.0 | Probabilistic-InPlace |   138156 |       269 |     0.001 |  0.750 |   -   |     -      |   -   |       3470.0 |
+| 0.0 | Exact (two heaps)     |   999960 |       610 |     1.000 |  1.000 |  yes  |    yes     |  yes  |      66372.0 |
+| 1.0 | Space-Saving          |   138156 |       375 |     1.000 |  1.000 |  yes  |    yes     |  yes  |      10937.9 |
+| 1.0 | CountSketch           |    33600 |      2104 |     0.990 |  0.990 |  no   |     -      |   -   |        272.0 |
+| 1.0 | Probabilistic-InPlace |   138156 |       278 |     0.001 |  1.000 |   -   |     -      |   -   |       2666.8 |
+| 1.0 | Exact (two heaps)     |   763873 |       335 |     1.000 |  1.000 |  yes  |    yes     |  yes  |      55305.4 |
 | 2.0 | Space-Saving          |      708 |        79 |     1.000 |  1.000 |  yes  |    yes     |  yes  |         67.6 |
-| 2.0 | CountSketch           |    33600 |      1127 |     1.000 |  1.000 |  yes  |     -      |   -   |        272.0 |
+| 2.0 | CountSketch           |    33600 |      1081 |     1.000 |  1.000 |  yes  |     -      |   -   |        272.0 |
 | 2.0 | Probabilistic-InPlace |      708 |        49 |     0.282 |  1.000 |   -   |     -      |   -   |         12.9 |
-| 3.0 | Space-Saving          |      322 |        79 |     1.000 |  1.000 |  yes  |    yes     |  yes  |         26.0 |
+| 2.0 | Exact (two heaps)     |     4301 |        50 |     1.000 |  1.000 |  yes  |    yes     |  yes  |        306.4 |
+| 3.0 | Space-Saving          |      322 |        76 |     1.000 |  1.000 |  yes  |    yes     |  yes  |         26.0 |
 | 3.0 | CountSketch           |    33600 |       950 |     1.000 |  1.000 |  yes  |     -      |   -   |        272.0 |
 | 3.0 | Probabilistic-InPlace |      322 |        32 |     0.578 |  0.930 |   -   |     -      |   -   |          4.6 |
+| 3.0 | Exact (two heaps)     |      275 |        40 |     1.000 |  1.000 |  yes  |    yes     |  yes  |         20.1 |
 
 The qualitative claims of the paper hold:
 
 - Space-Saving reports every frequent element with precision and recall 1 for all $\alpha$, and certifies the answer. Frequent cannot filter its candidates and reaches a precision of only 0.05–0.16 (paper: 0.05–0.22).
-- Space-Saving returns the exact top-100 in the correct order, with a guarantee, for every $\alpha \ge 0.5$, and runs 3.5–15× faster than CountSketch (paper: 30–82×).
+- Space-Saving returns the exact top-100 in the correct order, with a guarantee, for every $\alpha \ge 0.5$, and runs 4–15× faster than CountSketch (paper: 30–82×).
 - The space needed by Space-Saving falls sharply with skew: 22 counters at $\alpha = 3$, 126× less memory than GroupTest.
 - On uniform data ($\alpha = 0$) there is no meaningful top-k, and Space-Saving reports `guaranteed = no`.
 
 The one claim that does not hold with the theorem budgets is that Space-Saving always uses the least space: the bounds for $\alpha \le 1$ are loose. With `--topk-m=2000` (at most two-thirds of CountSketch's memory), Space-Saving still certifies the exact, ordered top-100 for every $\alpha \ge 1$ ([output](results/zipf_experiment_topk_m2000.md)).
+
+**Against exact counting** (not in the paper). The exact top-k (a counter per distinct element, a min-heap and a max-heap) is always correct, and in this implementation it updates about as fast as Space-Saving. Its memory, though, grows with the number of distinct elements: 54–65 MiB for $\alpha \le 1$, where 0.76–1 million distinct ids occur. With `--topk-m=2000`, Space-Saving stays at 157–182 KiB (330× less at $\alpha = 1$) and still certifies the exact top-100 for every $\alpha \ge 1$. On very skewed data only a few hundred distinct elements occur, and exact counting is just as small.
 
 ## Implementation Notes
 

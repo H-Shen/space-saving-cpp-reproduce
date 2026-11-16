@@ -13,11 +13,14 @@
 //   CountSketch            : $t = \lceil \ln(N/\delta) \rceil$ rows $\times\ b = 16k$ columns, $\delta = 0.01$;
 //                            $O(\log(N/\delta))$ rows as in [3], "hidden factor of 16" (Sec. 5)
 //   Probabilistic-InPlace  : the same $m$ as Space-Saving (Sec. 5), rounds of $r = \sqrt{mN/2}$ [6]
+//   Exact (two heaps)      : not in the paper; one counter per distinct element, plus a min-heap
+//                            of the top-k and a max-heap of the rest
 //
 // usage: zipf_experiment [--n=N] [--alphabet=A] [--phi=P] [--k=K] [--seed=S] [--topk-m=M]
 #include "experiment.hpp"
 
 #include <space_saving/baselines/count_sketch.hpp>
+#include <space_saving/baselines/exact_top_k.hpp>
 #include <space_saving/baselines/frequent.hpp>
 #include <space_saving/baselines/group_test.hpp>
 #include <space_saving/baselines/probabilistic_inplace.hpp>
@@ -172,6 +175,9 @@ std::vector<Row> top_k_experiment(const Config& cfg, const Workload& w) {
         // FindCandidateTop$(S, k, m/2)$: all $m/2$ candidates are the answer (Sec. 2)
         run("Probabilistic-InPlace", ss::baseline::ProbabilisticInPlace<Item>{b.space_saving, b.round},
             [](const auto& s) { return Answer{.items = s.candidates()}; }),
+        // Not in the paper: what exactness costs (a counter per distinct element, two heaps).
+        run("Exact (two heaps)", ss::baseline::ExactTopK<Item>{cfg.k},
+            [](const auto& s) { return Answer{.items = s.top_k(), .guaranteed = true, .order = true}; }),
     };
 }
 
