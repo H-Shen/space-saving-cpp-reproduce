@@ -3,6 +3,10 @@
 // Counters with equal value hang off one bucket; buckets form a list sorted by
 // value. Every update is a constant number of $O(1)$ list splices, and a hash
 // index gives $\Theta(1)$ lookup of a monitored element.
+//
+// Exception safety: every update gives the strong guarantee (a failed update
+// changes nothing), provided that `Hash`, `KeyEqual` and the move operations of
+// `Key` do not throw. Copying `Key` and allocating may throw.
 #pragma once
 
 #include "common.hpp"
@@ -20,6 +24,7 @@
 #include <ranges>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 
@@ -46,6 +51,42 @@ public:
         index_.reserve(capacity);
     }
 
+    /// Deep copy. The index holds iterators, so it is rebuilt to point into the copied lists.
+    StreamSummary(const StreamSummary& other)
+        : capacity_{other.capacity_},
+          index_{other.index_.bucket_count(), other.index_.hash_function(), other.index_.key_eq()} {
+        for (const auto& [value, children] : other.buckets_) {
+            auto& bucket = buckets_.emplace_back(value);
+            for (const auto& node : children) {
+                bucket.children.push_back(node);
+                index_.emplace(node.item, Slot{std::prev(buckets_.end()), std::prev(bucket.children.end())});
+            }
+        }
+    }
+
+    /// Moving hands the list nodes over, so the index stays valid; `other` is left empty.
+    StreamSummary(StreamSummary&& other) noexcept(std::is_nothrow_move_constructible_v<Index>)
+        : capacity_{other.capacity_}, buckets_{std::move(other.buckets_)}, index_{std::move(other.index_)} {
+        other.clear();
+    }
+
+    StreamSummary& operator=(const StreamSummary& other) {
+        if (this != &other) *this = StreamSummary{other};  // copy, then move: strong guarantee
+        return *this;
+    }
+
+    StreamSummary& operator=(StreamSummary&& other) noexcept(std::is_nothrow_move_assignable_v<Index>) {
+        if (this != &other) {
+            capacity_ = other.capacity_;
+            buckets_ = std::move(other.buckets_);
+            index_ = std::move(other.index_);
+            other.clear();
+        }
+        return *this;
+    }
+
+    ~StreamSummary() = default;
+
     [[nodiscard]] std::size_t capacity() const noexcept { return capacity_; }
     [[nodiscard]] std::size_t size() const noexcept { return index_.size(); }
     [[nodiscard]] bool full() const noexcept { return size() == capacity_; }
@@ -71,10 +112,18 @@ public:
     /// Puts `key` into an unused counter: $\mathrm{count} = 1$, $\varepsilon = 0$.  Pre: `!full()`.
     void add(const Key& key) {
         assert(!full() && !index_.contains(key));
-        if (buckets_.empty() || buckets_.front().value != 1) buckets_.emplace_front(1);
+        std::list<Node> fresh;
+        fresh.emplace_back(key, 0);  // may throw: nothing has changed yet
+        const bool new_bucket = buckets_.empty() || buckets_.front().value != 1;
+        if (new_bucket) buckets_.emplace_front(1);
+        try {
+            index_.emplace(key, Slot{buckets_.begin(), fresh.begin()});
+        } catch (...) {
+            if (new_bucket) buckets_.pop_front();
+            throw;
+        }
         auto& children = buckets_.front().children;
-        children.emplace_front(key, 0);
-        index_.emplace(key, Slot{buckets_.begin(), children.begin()});
+        children.splice(children.begin(), fresh);  // the node, and the iterator to it, move into the bucket
     }
 
     /// Replaces an element with the least hits by `key`: $\mathrm{count} = \mathit{min} + 1$, $\varepsilon = \mathit{min}$.
@@ -83,10 +132,13 @@ public:
         assert(full() && !index_.contains(key));
         const auto bucket = buckets_.begin();
         const auto node = bucket->children.begin();
+        Key item = key;  // everything that may throw comes before the first change
+        Key index_key = key;
+        const auto target = target_of(bucket);
         auto handle = index_.extract(node->item);  // re-key the hash node: no allocation
-        handle.key() = key;
-        *node = Node{key, bucket->value};
-        increment(index_.insert(std::move(handle)).position->second);
+        handle.key() = std::move(index_key);
+        *node = Node{std::move(item), bucket->value};
+        move_to(index_.insert(std::move(handle)).position->second, target);
     }
 
     /// Sequential traversal as a sorted list, largest count first.
@@ -137,28 +189,43 @@ private:
         BucketIt bucket;
         NodeIt node;
     };
+    using Index = std::unordered_map<Key, Slot, Hash, KeyEqual>;
 
     /// Moves the counter to the neighbouring bucket of value $v + 1$, creating that
     /// bucket if needed and deleting the old one if it becomes empty.
-    void increment(Slot& slot) {
-        const auto old = slot.bucket;
-        const Count value = old->value + 1;
-        auto next = std::next(old);
-        const bool next_matches = next != buckets_.end() && next->value == value;
+    void increment(Slot& slot) { move_to(slot, target_of(slot.bucket)); }
 
-        if (!next_matches && old->children.size() == 1) {  // sole child: relabel in place
-            old->value = value;
+    /// Where a counter of bucket `from` goes when incremented: the neighbour of value
+    /// $v + 1$; `from` itself if the counter is its only child (relabelled in place);
+    /// otherwise a new, still empty bucket. Only this step allocates.
+    BucketIt target_of(BucketIt from) {
+        const Count value = from->value + 1;
+        const auto next = std::next(from);
+        if (next != buckets_.end() && next->value == value) return next;
+        if (from->children.size() == 1) return from;
+        return buckets_.emplace(next, value);
+    }
+
+    /// Moves the counter of `slot` into `target`, as chosen by `target_of`.
+    void move_to(Slot& slot, BucketIt target) noexcept {
+        const auto from = slot.bucket;
+        if (target == from) {
+            ++from->value;
             return;
         }
-        if (!next_matches) next = buckets_.emplace(next, value);
-        next->children.splice(next->children.begin(), old->children, slot.node);
-        slot.bucket = next;
-        if (old->children.empty()) buckets_.erase(old);
+        target->children.splice(target->children.begin(), from->children, slot.node);
+        slot.bucket = target;
+        if (from->children.empty()) buckets_.erase(from);
+    }
+
+    void clear() noexcept {
+        buckets_.clear();
+        index_.clear();
     }
 
     std::size_t capacity_;
     std::list<Bucket> buckets_;  // ascending by value
-    std::unordered_map<Key, Slot, Hash, KeyEqual> index_;
+    Index index_;
 };
 
 }  // namespace ss

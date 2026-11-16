@@ -1,11 +1,13 @@
-// Checks the paper's worked examples, Lemma 1, Theorems 1-2, and that every
-// `guaranteed` / `order` flag reported by Fig. 3 and Fig. 4 is actually true.
+// Checks the paper's worked examples, Lemma 1, Theorems 1-2, that every
+// `guaranteed` / `order` flag reported by Fig. 3 and Fig. 4 is actually true,
+// and that copies and moves are independent, valid summaries.
 #include <space_saving/space_saving.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <memory>
 #include <print>
 #include <random>
 #include <ranges>
@@ -64,6 +66,52 @@ void exact_when_not_full(Checker& t) {
     t.expect(top.guaranteed && top.order && top.elements.size() == 2 && top.elements.front().item == 4,
              "exact top-2");
     t.expect(s.query_frequent(0.25).elements.size() == 2, "exact frequent");
+}
+
+// The extended answer $\{D, C\}$ is a guaranteed top-2, but its first element alone is
+// not a guaranteed top-1 (true frequencies: C = 3, D = 2, B = E = 1).
+void extended_top_k(Checker& t) {
+    ss::SpaceSaving<char> s{3};
+    for (const char c : std::string_view{"BCCECDD"}) s.insert(c);
+    const auto r = s.query_top_k(1);
+    t.expect(r.elements.size() == 2 && r.guaranteed && !r.order, "top-1 extended to a guaranteed top-2");
+    t.expect(!r.certified_top(1), "the top-1 prefix alone is not certified");
+    t.expect(r.certified_top(2), "the extended top-2 is");
+}
+
+// Copies are independent of their source and outlive it; moves leave an empty summary.
+void copy_and_move(Checker& t) {
+    const auto count = [](const auto& s, int x) {  // nullopt if `x` is not monitored
+        return s.estimate(x).transform([](const auto& e) { return e.count; });
+    };
+    auto a = std::make_unique<ss::SpaceSaving<int>>(3);
+    a->insert(1);
+    auto b = *a;
+    t.expect_valid(b);
+    b.insert(1);
+    t.expect(count(*a, 1) == ss::Count{1} && count(b, 1) == ss::Count{2}, "copy is independent of its source");
+    a.reset();
+    t.expect(count(b, 1) == ss::Count{2}, "copy outlives its source");
+    t.expect_valid(b);
+
+    ss::SpaceSaving<int> c{5};
+    for (const int x : {7, 8, 8}) c.insert(x);
+    c = b;  // copy assignment replaces the old contents
+    c.insert(2);
+    t.expect(!c.estimate(7) && count(c, 1) == ss::Count{2} && !b.estimate(2), "copy assignment is independent");
+    t.expect_valid(c);
+    t.expect_valid(b);
+
+    auto d = std::move(c);
+    t.expect(d.estimate(2).has_value() && d.stream_length() == 3, "move keeps the contents");
+    t.expect_valid(d);
+    t.expect_valid(c);  // NOLINT(bugprone-use-after-move,clang-analyzer-cplusplus.Move): moved-from state
+    t.expect(c.stream_length() == 0 && c.sorted().empty(), "moved-from summary is empty");
+    c.insert(9);  // and still usable
+    t.expect_valid(c);
+    d = std::move(c);
+    t.expect(d.stream_length() == 1 && d.estimate(9).has_value(), "move assignment");
+    t.expect_valid(d);
 }
 
 // ------------------------------------------------- randomized property checks
@@ -147,12 +195,29 @@ void check_top_k(const Trial& tr, Checker& t) {
             const auto worst = std::ranges::min(out | std::views::transform([&](const auto& e) { return f[e.item]; }));
             t.expect(worst >= best_outside(f, out), "Fig. 4: guaranteed => correct top-k'");
         }
+        if (r.certified_top(k)) {
+            const auto top = out.first(std::min(k, out.size()));
+            const auto worst = std::ranges::min(top | std::views::transform([&](const auto& e) { return f[e.item]; }));
+            t.expect(worst >= best_outside(f, top), "certified_top(k) => correct top-k");
+        }
         if (r.order) {
-            t.expect(r.guaranteed, "order => guaranteed");
+            t.expect(r.certified_top(k), "order => certified top-k");
             for (std::size_t i = 0; i < std::min(k, out.size()); ++i)
                 t.expect(f[out[i].item] >= best_outside(f, out.first(i + 1)), "Fig. 4: order => true rank");
         }
     }
+}
+
+/// A copy starts equal to its source, then changes without affecting it.
+void check_copy(const Trial& tr, std::mt19937_64& rng, Checker& t) {
+    const auto before = tr.sketch.sorted();
+    auto copy = tr.sketch;
+    t.expect(copy.sorted() == before && copy.stream_length() == tr.sketch.stream_length(), "copy equal");
+    std::uniform_int_distribution<Item> pick{0, 100};
+    for (int i = 0; i < 50; ++i) copy.insert(pick(rng));
+    t.expect_valid(copy);
+    t.expect(tr.sketch.sorted() == before, "source unchanged by the copy");
+    t.expect_valid(tr.sketch);
 }
 
 void randomized(Checker& t, int trials) {
@@ -162,6 +227,7 @@ void randomized(Checker& t, int trials) {
         check_bounds(tr, t);
         check_frequent(tr, t);
         check_top_k(tr, t);
+        check_copy(tr, rng, t);
     }
 }
 
@@ -177,7 +243,10 @@ int main() {  // NOLINT(bugprone-exception-escape): a test may terminate on an u
     run("Example 1 / Fig. 2", paper_example_1);
     run("Lemma 1 permutation example", lemma1_permutations);
     run("exact when distinct <= m", exact_when_not_full);
-    run("randomized: invariants, Lemma 1, Thm 1-2, Fig. 3-4 soundness", [](Checker& c) { randomized(c, 3000); });
+    run("extended top-k: guarantee does not carry over to the prefix", extended_top_k);
+    run("copy and move", copy_and_move);
+    run("randomized: invariants, Lemma 1, Thm 1-2, Fig. 3-4 soundness, copies",
+        [](Checker& c) { randomized(c, 3000); });
     if (t.failures() != 0) {
         std::println("{} check(s) failed", t.failures());
         return EXIT_FAILURE;

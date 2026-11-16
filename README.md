@@ -43,12 +43,14 @@ Each reported element carries the interval `[count - ε .. count]` that contains
 
 ## Test Coverage
 
-`xmake test` runs four tests:
+`xmake test` runs six tests:
 
-1. **`test_space_saving`:** checks the paper's examples (Example 1 / Fig. 2, and the permutation example of Sec. 3.2), then runs 3,000 random skewed streams against exact counts. On every stream it verifies the Stream-Summary invariants, Lemma 1 ($\mathit{min} \le N/m$), the bounds $\mathrm{count}_e - \varepsilon_e \le F_e \le \mathrm{count}_e$, Theorems 1 and 2, and that every `guaranteed` and `order` flag returned by Fig. 3 and Fig. 4 is correct.
+1. **`test_space_saving`:** checks the paper's examples (Example 1 / Fig. 2, and the permutation example of Sec. 3.2), then runs 3,000 random skewed streams against exact counts. On every stream it verifies the Stream-Summary invariants, Lemma 1 ($\mathit{min} \le N/m$), the bounds $\mathrm{count}_e - \varepsilon_e \le F_e \le \mathrm{count}_e$, Theorems 1 and 2, and that every `guaranteed` and `order` flag returned by Fig. 3 and Fig. 4 is correct. It also checks that copies of a summary are independent of their source and outlive it, that moves leave an empty summary, and that the guarantee of an extended top-k answer does not carry over to its first $k$ elements.
 2. **`test_baselines`:** checks the error bound of Frequent on 500 random streams, and that CountSketch, GroupTest and Probabilistic-InPlace recover planted heavy hitters.
-3. **`paper_example`:** runs the worked example.
-4. **`zipf_experiment` (smoke):** runs the experiment with $N = 2 \times 10^5$.
+3. **`test_exception_safety`:** makes every allocation, and every copy of a key, fail in turn during each insert. A failed insert must change nothing, and the final summary must equal one built without failures.
+4. **`test_experiment`:** checks the scoring used by the experiment, including ties at the top-k cutoff, and that every configuration the command line accepts gives every algorithm a usable budget.
+5. **`paper_example`:** runs the worked example.
+6. **`zipf_experiment` (smoke):** runs the experiment with $N = 2 \times 10^5$.
 
 The code is also clean under AddressSanitizer and UBSan:
 
@@ -83,52 +85,60 @@ Parameters can be changed on the command line, for example:
 xmake run zipf_experiment --n=1000000 --alphabet=100000 --k=50 --topk-m=2000
 ```
 
+A configuration that would leave some algorithm without a usable budget is rejected with the reason. For example, `--k=1` gives $m = 1$ at $\alpha = 1.5$, but Probabilistic-InPlace needs $m \ge 2$; add `--topk-m=2` or more to run it.
+
 ## Results
 
-Results obtained on Linux x86-64 with GCC 15.2. Precision is the fraction of reported elements that are correct; recall is the fraction of correct elements that are reported.
+Results obtained on Linux x86-64 with GCC 15.2; [`results/`](results) holds the unedited output of every run and the [environment](results/environment.md). Accuracy, guarantee flags and memory are deterministic for the default seed. Timings come from a single run per configuration and vary by a few percent between runs.
+
+- **precision:** the fraction of reported elements that are correct.
+- **recall:** the fraction of correct elements that are reported.
+- **top-k with ties:** when several elements tie at the $k$-th largest frequency $F_k$, several answers are correct. Every element with $f > F_k$ is required, and the remaining slots may go to any elements with $f = F_k$. Tied elements beyond those slots are not credited, so precision and recall are both 1 exactly when the answer is a correct top-k.
+- **exact:** an independent check, for answers of exactly $k$ elements, that no element left out is more frequent than the least frequent one returned.
+- **guaranteed / order:** the certificates Space-Saving gives itself. For top-k they refer to the $k$ reported elements; an answer that Fig. 4 had to extend to $k' > k$ counts as not guaranteed.
 
 **Frequent elements** (cf. Fig. 5):
 
 |  α  | algorithm    | counters | time (ms) | precision | recall | guaranteed | memory (KiB) |
 |----:|--------------|---------:|----------:|----------:|-------:|:----------:|-------------:|
-| 0.0 | Space-Saving |    10000 |       373 |     1.000 |  1.000 |    yes     |        783.5 |
-| 0.0 | Frequent     |      100 |       348 |     0.000 |  1.000 |     -      |          3.6 |
-| 0.0 | GroupTest    |    42000 |       527 |     1.000 |  1.000 |     -      |        328.3 |
-| 1.0 | Space-Saving |    10000 |       287 |     1.000 |  1.000 |    yes     |        828.8 |
-| 1.0 | Frequent     |      100 |       322 |     0.162 |  1.000 |     -      |          2.0 |
-| 1.0 | GroupTest    |    42000 |       510 |     0.750 |  1.000 |     -      |        328.3 |
-| 2.0 | Space-Saving |      100 |        73 |     1.000 |  1.000 |    yes     |         10.5 |
-| 2.0 | Frequent     |      100 |        42 |     0.070 |  1.000 |     -      |          3.9 |
-| 2.0 | GroupTest    |    42000 |       527 |     1.000 |  1.000 |     -      |        328.3 |
-| 3.0 | Space-Saving |       22 |        43 |     1.000 |  1.000 |    yes     |          2.6 |
-| 3.0 | Frequent     |      100 |        37 |     0.048 |  1.000 |     -      |          3.4 |
-| 3.0 | GroupTest    |    42000 |       420 |     1.000 |  1.000 |     -      |        328.3 |
+| 0.0 | Space-Saving |    10000 |       393 |     1.000 |  1.000 |    yes     |        783.5 |
+| 0.0 | Frequent     |      100 |       346 |     0.000 |  1.000 |     -      |          3.6 |
+| 0.0 | GroupTest    |    42000 |       536 |     1.000 |  1.000 |     -      |        328.3 |
+| 1.0 | Space-Saving |    10000 |       318 |     1.000 |  1.000 |    yes     |        828.8 |
+| 1.0 | Frequent     |      100 |       339 |     0.162 |  1.000 |     -      |          2.0 |
+| 1.0 | GroupTest    |    42000 |       521 |     0.750 |  1.000 |     -      |        328.3 |
+| 2.0 | Space-Saving |      100 |        80 |     1.000 |  1.000 |    yes     |         10.5 |
+| 2.0 | Frequent     |      100 |        41 |     0.070 |  1.000 |     -      |          3.9 |
+| 2.0 | GroupTest    |    42000 |       538 |     1.000 |  1.000 |     -      |        328.3 |
+| 3.0 | Space-Saving |       22 |        56 |     1.000 |  1.000 |    yes     |          2.6 |
+| 3.0 | Frequent     |      100 |        39 |     0.048 |  1.000 |     -      |          3.4 |
+| 3.0 | GroupTest    |    42000 |       439 |     1.000 |  1.000 |     -      |        328.3 |
 
 **Top-100** (cf. Fig. 6):
 
-|  α  | algorithm             | counters | time (ms) | precision | recall | guaranteed | order | memory (KiB) |
-|----:|-----------------------|---------:|----------:|----------:|-------:|:----------:|:-----:|-------------:|
-| 0.0 | Space-Saving          |   138156 |       573 |     0.000 |  0.000 |     no     |  no   |      10869.0 |
-| 0.0 | CountSketch           |    33600 |      2174 |     0.010 |  0.010 |     -      |   -   |        272.0 |
-| 0.0 | Probabilistic-InPlace |   138156 |       259 |     0.001 |  0.750 |     -      |   -   |       3470.0 |
-| 1.0 | Space-Saving          |   138156 |       353 |     1.000 |  1.000 |    yes     |  yes  |      10937.9 |
-| 1.0 | CountSketch           |    33600 |      2063 |     0.990 |  0.990 |     -      |   -   |        272.0 |
-| 1.0 | Probabilistic-InPlace |   138156 |       259 |     0.001 |  1.000 |     -      |   -   |       2666.8 |
-| 2.0 | Space-Saving          |      708 |        70 |     1.000 |  1.000 |    yes     |  yes  |         67.6 |
-| 2.0 | CountSketch           |    33600 |      1084 |     1.000 |  1.000 |     -      |   -   |        272.0 |
-| 2.0 | Probabilistic-InPlace |      708 |        48 |     0.282 |  1.000 |     -      |   -   |         12.9 |
-| 3.0 | Space-Saving          |      322 |        68 |     1.000 |  1.000 |    yes     |  yes  |         26.0 |
-| 3.0 | CountSketch           |    33600 |       922 |     1.000 |  1.000 |     -      |   -   |        272.0 |
-| 3.0 | Probabilistic-InPlace |      322 |        31 |     0.596 |  0.960 |     -      |   -   |          4.6 |
+|  α  | algorithm             | counters | time (ms) | precision | recall | exact | guaranteed | order | memory (KiB) |
+|----:|-----------------------|---------:|----------:|----------:|-------:|:-----:|:----------:|:-----:|-------------:|
+| 0.0 | Space-Saving          |   138156 |       617 |     0.000 |  0.000 |  no   |     no     |  no   |      10869.0 |
+| 0.0 | CountSketch           |    33600 |      2225 |     0.010 |  0.010 |  no   |     -      |   -   |        272.0 |
+| 0.0 | Probabilistic-InPlace |   138156 |       281 |     0.001 |  0.750 |   -   |     -      |   -   |       3470.0 |
+| 1.0 | Space-Saving          |   138156 |       376 |     1.000 |  1.000 |  yes  |    yes     |  yes  |      10937.9 |
+| 1.0 | CountSketch           |    33600 |      2152 |     0.990 |  0.990 |  no   |     -      |   -   |        272.0 |
+| 1.0 | Probabilistic-InPlace |   138156 |       280 |     0.001 |  1.000 |   -   |     -      |   -   |       2666.8 |
+| 2.0 | Space-Saving          |      708 |        79 |     1.000 |  1.000 |  yes  |    yes     |  yes  |         67.6 |
+| 2.0 | CountSketch           |    33600 |      1127 |     1.000 |  1.000 |  yes  |     -      |   -   |        272.0 |
+| 2.0 | Probabilistic-InPlace |      708 |        49 |     0.282 |  1.000 |   -   |     -      |   -   |         12.9 |
+| 3.0 | Space-Saving          |      322 |        79 |     1.000 |  1.000 |  yes  |    yes     |  yes  |         26.0 |
+| 3.0 | CountSketch           |    33600 |       950 |     1.000 |  1.000 |  yes  |     -      |   -   |        272.0 |
+| 3.0 | Probabilistic-InPlace |      322 |        32 |     0.578 |  0.930 |   -   |     -      |   -   |          4.6 |
 
 The qualitative claims of the paper hold:
 
 - Space-Saving reports every frequent element with precision and recall 1 for all $\alpha$, and certifies the answer. Frequent cannot filter its candidates and reaches a precision of only 0.05–0.16 (paper: 0.05–0.22).
-- Space-Saving returns the exact top-100 in the correct order, with a guarantee, for every $\alpha \ge 0.5$, and runs 4–18× faster than CountSketch (paper: 30–82×).
+- Space-Saving returns the exact top-100 in the correct order, with a guarantee, for every $\alpha \ge 0.5$, and runs 3.5–15× faster than CountSketch (paper: 30–82×).
 - The space needed by Space-Saving falls sharply with skew: 22 counters at $\alpha = 3$, 126× less memory than GroupTest.
 - On uniform data ($\alpha = 0$) there is no meaningful top-k, and Space-Saving reports `guaranteed = no`.
 
-The one claim that does not hold with the theorem budgets is that Space-Saving always uses the least space: the bounds for $\alpha \le 1$ are loose. With `--topk-m=2000` (about 60% of CountSketch's memory), Space-Saving still certifies the exact, ordered top-100 for every $\alpha \ge 1$.
+The one claim that does not hold with the theorem budgets is that Space-Saving always uses the least space: the bounds for $\alpha \le 1$ are loose. With `--topk-m=2000` (at most two-thirds of CountSketch's memory), Space-Saving still certifies the exact, ordered top-100 for every $\alpha \ge 1$ ([output](results/zipf_experiment_topk_m2000.md)).
 
 ## Implementation Notes
 
@@ -136,7 +146,7 @@ Where the paper leaves details open or is inconsistent, this project makes the f
 
 - **QueryFrequent (Fig. 3):** in addition to checking $\mathrm{count}_i - \varepsilon_i > \phi N$ for every reported element, the answer is guaranteed only if $\mathit{min} \le \phi N$. Otherwise an unmonitored element could still be frequent. This only matters when $m < 1/\phi$.
 - **QueryTop-k (Fig. 4):** the two loops are merged into one with the same meaning; past the last counter, $\mathrm{count}_{m+1} = \mathit{min}$.
-- **Stream-Summary:** a bucket with a single element changes its value in place instead of creating a new bucket and deleting the old one.
+- **Stream-Summary:** a bucket with a single element changes its value in place instead of creating a new bucket and deleting the old one. Copying a summary rebuilds its hash index, which holds iterators into the lists. Every update gives the strong exception guarantee, provided the hash, the key comparison and the moves of the key do not throw, so a failed `insert` leaves both the summary and $N$ unchanged.
 - **Frequent:** decrement-all is $O(m)$ but happens at most $N/(m+1)$ times, so updates are amortized $O(1)$.
 - **GroupTest:** a recovered id is reported only if it hashes back to the group it was recovered from and all $t$ groups containing it exceed $\phi N$. Counters are 8 bytes, so memory is twice the paper's.
 - **CountSketch:** candidates are re-estimated on every arrival, which makes it slightly more accurate than the original.
@@ -152,6 +162,9 @@ Where the paper leaves details open or is inconsistent, this project makes the f
 ss::SpaceSaving<std::string> s{1000};   // m = 1000 counters
 for (const auto& x : stream) s.insert(x);
 auto top  = s.query_top_k(10);          // top.elements, top.guaranteed, top.order
+bool sure = top.certified_top(10);      // the first 10 alone are a guaranteed top-10
 auto freq = s.query_frequent(0.01);     // freq.elements, freq.guaranteed
 auto e    = s.estimate("foo");          // std::optional<Entry>, O(1)
 ```
+
+If the top-k cannot be certified, `query_top_k(k)` extends the answer to the smallest $k' > k$ whose top-$k'$ can be (Fig. 4). `guaranteed` then refers to all $k'$ elements, not to the first $k$; use `certified_top(k)` for those.

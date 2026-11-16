@@ -12,6 +12,8 @@
 #include <optional>
 #include <ranges>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace ss {
@@ -25,8 +27,14 @@ struct FrequentResult {
 template <class Key>
 struct TopKResult {
     std::vector<Entry<Key>> elements;  ///< the first $k$, or $k' > k$ if the search was extended
-    bool guaranteed = false;           ///< elements are a correct top-$|\mathrm{elements}|$
-    bool order = true;                 ///< the first $k$ elements are in their true order
+    /// `elements` as a whole are a correct top-$|\mathrm{elements}|$. After an extension this says
+    /// nothing about the first $k$ alone; see `certified_top`.
+    bool guaranteed = false;
+    bool order = true;  ///< the first $k$ elements are in their true order
+
+    /// Whether the first `k` elements alone are a guaranteed top-$k$: Fig. 4 extends the
+    /// answer exactly when they are not, so this holds iff no extension was needed.
+    [[nodiscard]] bool certified_top(std::size_t k) const noexcept { return guaranteed && elements.size() <= k; }
 };
 
 template <std::copyable Key, HashFor<Key> Hash = std::hash<Key>,
@@ -38,14 +46,30 @@ public:
     /// @param m number of counters $m$.
     explicit SpaceSaving(std::size_t m) : summary_{m} {}
 
-    /// Fig. 1.
+    SpaceSaving(const SpaceSaving&) = default;
+    SpaceSaving& operator=(const SpaceSaving&) = default;  // strong: only the summary copy may throw
+
+    /// A moved-from summary is empty, with $N = 0$.
+    SpaceSaving(SpaceSaving&& other) noexcept(std::is_nothrow_move_constructible_v<Summary>)
+        : summary_{std::move(other.summary_)}, n_{std::exchange(other.n_, 0)} {}
+
+    SpaceSaving& operator=(SpaceSaving&& other) noexcept(std::is_nothrow_move_assignable_v<Summary>) {
+        summary_ = std::move(other.summary_);
+        n_ = std::exchange(other.n_, 0);
+        return *this;
+    }
+
+    ~SpaceSaving() = default;
+
+    /// Fig. 1. If it throws, nothing changes, so $N$ always counts the inserted elements.
     void insert(const Key& e) {
+        if (!summary_.try_increment(e)) {
+            if (summary_.full())
+                summary_.replace_min(e);
+            else
+                summary_.add(e);
+        }
         ++n_;
-        if (summary_.try_increment(e)) return;
-        if (summary_.full())
-            summary_.replace_min(e);
-        else
-            summary_.add(e);
     }
 
     [[nodiscard]] Count stream_length() const noexcept { return n_; }
