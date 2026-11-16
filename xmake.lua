@@ -4,7 +4,7 @@ set_version("1.0.0")
 add_rules("mode.debug", "mode.release")
 set_defaultmode("release")
 
-set_languages("c++23")
+set_languages("c++26")
 set_warnings("allextra", "pedantic")
 add_cxxflags("-Wconversion", "-Wshadow")
 

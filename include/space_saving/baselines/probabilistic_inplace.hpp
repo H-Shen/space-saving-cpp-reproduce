@@ -57,8 +57,8 @@ private:
 
     /// Top $m/2$ of reserved and round counters; an element in both keeps its larger count.
     [[nodiscard]] std::vector<Candidate> top_half() const {
-        std::unordered_map<Key, Count, Hash, KeyEqual> best(reserved_.begin(), reserved_.end());
-        for (const auto& [item, count] : round_) {
+        std::unordered_map<Key, Count, Hash, KeyEqual> best;
+        for (const auto& [item, count] : std::views::concat(reserved_, round_)) {
             auto& c = best[item];
             c = std::max(c, count);
         }

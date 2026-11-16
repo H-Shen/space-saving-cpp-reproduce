@@ -7,6 +7,7 @@
 
 #include "common.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <concepts>
 #include <cstddef>
@@ -105,11 +106,11 @@ public:
     /// index consistent, and $\varepsilon_i < \mathrm{count}_i$, $\varepsilon_i \le \mathit{min}$ for every counter.
     [[nodiscard]] std::expected<void, std::string> validate() const {
         const auto fail = [](std::string why) { return std::unexpected{std::move(why)}; };
+        if (std::ranges::adjacent_find(buckets_, std::greater_equal{}, &Bucket::value) != buckets_.end())
+            return fail("buckets not strictly increasing");
         std::size_t seen = 0;
         for (auto b = buckets_.begin(); b != buckets_.end(); ++b) {
             if (b->children.empty()) return fail("empty bucket");
-            if (const auto nb = std::next(b); nb != buckets_.end() && nb->value <= b->value)
-                return fail("buckets not strictly increasing");
             for (auto n = b->children.begin(); n != b->children.end(); ++n, ++seen) {
                 const auto it = index_.find(n->item);
                 if (it == index_.end() || it->second.bucket != b || it->second.node != n)

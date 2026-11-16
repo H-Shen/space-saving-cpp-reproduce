@@ -19,7 +19,7 @@ xmake test
 
 If your system provides a different version of `g++`, adjust `--cc` and `--cxx` accordingly.
 
-The project uses C++23 (`std::generator`, `std::expected`, `std::print`, ranges, deducing `this`) and builds with `-Wall -Wextra -Wpedantic -Wconversion -Wshadow` without warnings.
+The project is built as C++26 (`-std=c++26`). It uses the C++26 features that GCC 15 already supports, such as `std::views::concat` and testable `std::from_chars_result`, on top of C++23 (`std::generator`, `std::expected`, `std::print`, ranges, deducing `this`). It builds with `-Wall -Wextra -Wpedantic -Wconversion -Wshadow` without warnings.
 
 To run the worked example and the full experiment:
 

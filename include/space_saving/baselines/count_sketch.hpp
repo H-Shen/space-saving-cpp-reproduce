@@ -28,13 +28,12 @@ template <std::totally_ordered Key, HashFor<Key> Hash = std::hash<Key>>
 class CountSketch {
 public:
     CountSketch(std::size_t rows, std::size_t width, std::size_t k, std::uint64_t seed)
-        : width_{width}, k_{k}, counts_(rows * width), scratch_(rows) {
+        : width_{width}, k_{k}, counts_(rows * width), scratch_(rows), hashes_(rows) {
         if (rows == 0 || width == 0 || k == 0) throw std::invalid_argument{"CountSketch: bad parameters"};
         std::mt19937_64 rng{seed};
-        hashes_ = std::views::iota(0UZ, rows) | std::views::transform([&](auto) {
-                      return RowHash{.bucket = detail::MultiplyAdd::random(rng), .sign = detail::MultiplyAdd::random(rng)};
-                  }) |
-                  std::ranges::to<std::vector>();
+        std::ranges::generate(hashes_, [&] {
+            return RowHash{.bucket = detail::MultiplyAdd::random(rng), .sign = detail::MultiplyAdd::random(rng)};
+        });
     }
 
     void insert(const Key& e) {

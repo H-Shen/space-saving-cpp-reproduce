@@ -35,12 +35,12 @@ class GroupTest {
 public:
     /// @param tests $t$ (independent repetitions), @param groups $b$, @param id_bits $L$.
     GroupTest(std::size_t tests, std::size_t groups, int id_bits, std::uint64_t seed)
-        : groups_{groups}, bits_{static_cast<std::size_t>(id_bits)}, counts_(tests * groups * (bits_ + 1)) {
+        : groups_{groups}, bits_{static_cast<std::size_t>(id_bits)}, counts_(tests * groups * (bits_ + 1)),
+          hashes_(tests) {
         if (tests == 0 || groups == 0 || id_bits <= 0 || id_bits > std::numeric_limits<Key>::digits)
             throw std::invalid_argument{"GroupTest: bad parameters"};
         std::mt19937_64 rng{seed};
-        hashes_ = std::views::iota(0UZ, tests) | std::views::transform([&](auto) { return detail::MultiplyAdd::random(rng); }) |
-                  std::ranges::to<std::vector>();
+        std::ranges::generate(hashes_, [&] { return detail::MultiplyAdd::random(rng); });
     }
 
     void insert(Key e) {

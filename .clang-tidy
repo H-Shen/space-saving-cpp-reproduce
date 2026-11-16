@@ -16,5 +16,5 @@ Checks: >
   -readability-braces-around-statements,
   -cppcoreguidelines-pro-bounds-avoid-unchecked-container-access
 WarningsAsErrors: ''
-HeaderFilterRegex: '.*/space_saving_cpp/(include|tests|examples|bench)/.*'
+HeaderFilterRegex: '.*/(include|tests|examples|bench)/.*'
 FormatStyle: file

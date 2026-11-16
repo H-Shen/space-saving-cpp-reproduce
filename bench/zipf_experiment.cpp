@@ -64,8 +64,8 @@ struct Config {
 template <class T>
 bool assign(T& out, std::string_view text) {
     const auto* const last = std::to_address(text.end());
-    const auto [end, ec] = std::from_chars(std::to_address(text.begin()), last, out);
-    return ec == std::errc{} && end == last;
+    const auto result = std::from_chars(std::to_address(text.begin()), last, out);
+    return result && result.ptr == last;  // C++26: from_chars_result is testable
 }
 
 std::expected<Config, std::string> parse_args(std::span<char* const> args) {
@@ -187,8 +187,8 @@ std::size_t capped(double m, Item alphabet) {
 std::vector<Row> frequent_experiment(const Config& cfg, const Workload& w) {
     const double support = cfg.phi * static_cast<double>(cfg.n);
     const auto is_frequent = [&](Item x) { return static_cast<double>(w.freq[x]) > support; };
-    const auto relevant =
-        static_cast<std::size_t>(std::ranges::count_if(std::views::iota(Item{0}, cfg.alphabet), is_frequent));
+    const auto relevant = static_cast<std::size_t>(
+        std::ranges::count_if(w.freq, [&](ss::Count f) { return static_cast<double>(f) > support; }));
     const auto run = [&](std::string_view name, auto sketch, auto query) {
         return measure(name, w, std::move(sketch), query, is_frequent, relevant);
     };
