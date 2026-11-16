@@ -30,11 +30,15 @@ struct TopKResult {
     /// `elements` as a whole are a correct top-$|\mathrm{elements}|$. After an extension this says
     /// nothing about the first $k$ alone; see `certified_top`.
     bool guaranteed = false;
-    bool order = true;  ///< the first $k$ elements are in their true order
+    bool order = true;        ///< the first $k$ elements are the true top-$k$, in their true order
+    bool exhaustive = false;  ///< `elements` are every element seen so far (none was ever evicted)
 
-    /// Whether the first `k` elements alone are a guaranteed top-$k$: Fig. 4 extends the
-    /// answer exactly when they are not, so this holds iff no extension was needed.
-    [[nodiscard]] bool certified_top(std::size_t k) const noexcept { return guaranteed && elements.size() <= k; }
+    /// Whether `elements` are a guaranteed top-`k` on their own. Fig. 4 extends the answer
+    /// exactly when the first $k$ are not guaranteed, so an extended answer never qualifies.
+    /// An answer with fewer than $k$ elements qualifies only if it lists every element seen.
+    [[nodiscard]] bool certified_top(std::size_t k) const noexcept {
+        return guaranteed && (elements.size() == k || (elements.size() < k && exhaustive));
+    }
 };
 
 template <std::copyable Key, HashFor<Key> Hash = std::hash<Key>,
@@ -120,6 +124,10 @@ public:
             if (i < k && all[i].guaranteed() < count_at(i + 1)) r.order = false;
         }
         r.guaranteed = count_at(r.elements.size()) <= min_guaranteed;
+        // Elements are evicted only from a full summary, so one that never filled up holds,
+        // exactly, every element seen.
+        r.exhaustive = !summary_.full() && r.elements.size() == all.size();
+        if (r.elements.size() < k && !r.exhaustive) r.order = false;  // some of the top-$k$ are unknown
         return r;
     }
 

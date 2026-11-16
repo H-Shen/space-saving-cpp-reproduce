@@ -79,6 +79,22 @@ void extended_top_k(Checker& t) {
     t.expect(r.certified_top(2), "the extended top-2 is");
 }
 
+// A short answer is a certified top-k only if it lists every element seen: here
+// {C, A} is a correct top-2, but B was seen too, so it is no top-3.
+void short_top_k(Checker& t) {
+    ss::SpaceSaving<char> s{2};
+    for (const char c : std::string_view{"AABCCC"}) s.insert(c);
+    const auto r = s.query_top_k(3);
+    t.expect(r.elements.size() == 2 && r.guaranteed, "a guaranteed top-2");
+    t.expect(!r.certified_top(3) && !r.order, "not a certified (or ordered) top-3: B is missing");
+    t.expect(!s.query_top_k(1).certified_top(2), "a top-1 is no top-2");
+
+    ss::SpaceSaving<char> few{5};  // never full: every element seen is monitored, exactly
+    for (const char c : std::string_view{"AAB"}) few.insert(c);
+    const auto all = few.query_top_k(3);
+    t.expect(all.elements.size() == 2 && all.certified_top(3), "only 2 elements seen: both are the top-3");
+}
+
 // Copies are independent of their source and outlive it; moves leave an empty summary.
 void copy_and_move(Checker& t) {
     const auto count = [](const auto& s, int x) {  // nullopt if `x` is not monitored
@@ -199,6 +215,7 @@ void check_top_k(const Trial& tr, Checker& t) {
             const auto top = out.first(std::min(k, out.size()));
             const auto worst = std::ranges::min(top | std::views::transform([&](const auto& e) { return f[e.item]; }));
             t.expect(worst >= best_outside(f, top), "certified_top(k) => correct top-k");
+            t.expect(top.size() == k || best_outside(f, top) == 0, "certified_top(k) => k elements, or all seen");
         }
         if (r.order) {
             t.expect(r.certified_top(k), "order => certified top-k");
@@ -244,6 +261,7 @@ int main() {  // NOLINT(bugprone-exception-escape): a test may terminate on an u
     run("Lemma 1 permutation example", lemma1_permutations);
     run("exact when distinct <= m", exact_when_not_full);
     run("extended top-k: guarantee does not carry over to the prefix", extended_top_k);
+    run("short top-k: certified only if it lists every element seen", short_top_k);
     run("copy and move", copy_and_move);
     run("randomized: invariants, Lemma 1, Thm 1-2, Fig. 3-4 soundness, copies",
         [](Checker& c) { randomized(c, 3000); });
